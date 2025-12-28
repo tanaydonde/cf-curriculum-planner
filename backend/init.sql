@@ -25,8 +25,15 @@ CREATE TABLE IF NOT EXISTS user_logs (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS topics (
+    id SERIAL PRIMARY KEY,
+    slug TEXT UNIQUE NOT NULL,
+    display_name TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS topic_dependencies (
-    prereq_topic TEXT,
-    target_topic TEXT,
-    PRIMARY KEY (prereq_topic, target_topic)
+    parent_id INTEGER REFERENCES topics(id) ON DELETE CASCADE,
+    child_id INTEGER REFERENCES topics(id) ON DELETE CASCADE,
+    PRIMARY KEY (parent_id, child_id),
+    CONSTRAINT no_self_referencing CHECK (parent_id <> child_id)
 );

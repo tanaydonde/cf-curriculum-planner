@@ -41,13 +41,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("database tables initialized")
-
 	// problems, err := getProblems()
 	// if err != nil {
 	// 	log.Fatal(err)
 	// }
-	// saveProblemsToDB(problems)
+	// createTables(problems)
+
+	// fmt.Println("database tables initialized")
 
 	r := chi.NewRouter()
 
@@ -63,6 +63,7 @@ func main() {
 	r.Use(middleware.Logger)
 
 	r.Get("/problems/{topic}", getProblemsByTopic)
+	r.Get("/graph", getGraphHandler)
 
 	fmt.Println("Server starting on http://localhost:8080")
     log.Fatal(http.ListenAndServe(":8080", r))
