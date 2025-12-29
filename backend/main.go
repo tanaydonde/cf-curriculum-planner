@@ -17,6 +17,7 @@ import (
 var conn *pgx.Conn
 
 func main() {
+	update_table := true
 	var err error
 
 	connStr := "postgres://donde783985@localhost:5432/cf_planner"
@@ -41,13 +42,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	// problems, err := getProblems()
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// createTables(problems)
+	if update_table {
+		problems, err := getProblems()
+		if err != nil {
+			log.Fatal(err)
+		}
+		createTables(problems)
 
-	// fmt.Println("database tables initialized")
+		fmt.Println("database tables initialized")
+	}
 
 	r := chi.NewRouter()
 

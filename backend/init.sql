@@ -37,3 +37,21 @@ CREATE TABLE IF NOT EXISTS topic_dependencies (
     PRIMARY KEY (parent_id, child_id),
     CONSTRAINT no_self_referencing CHECK (parent_id <> child_id)
 );
+
+CREATE TABLE IF NOT EXISTS user_topic_stats (
+    handle TEXT NOT NULL,
+    topic_slug TEXT NOT NULL REFERENCES topics(slug),
+    mastery_score FLOAT DEFAULT 0,
+    peak_score FLOAT DEFAULT 0,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (handle, topic_slug)
+);
+
+CREATE TABLE IF NOT EXISTS user_interval_stats (
+    handle TEXT NOT NULL,
+    topic_slug TEXT NOT NULL REFERENCES topics(slug),
+    interval_idx INT NOT NULL, -- 0 is most recent and increases as u go more in the past
+    bin_score FLOAT NOT NULL, -- M(i, T)
+    weighted_count FLOAT NOT NULL, -- sum of multiplier(j, T)
+    PRIMARY KEY (handle, topic_slug, interval_idx)
+);
