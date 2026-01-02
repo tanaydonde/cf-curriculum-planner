@@ -14,7 +14,7 @@ func main() {
 
 	fmt.Println("successfully connected to the database")
 
-	script, err := os.ReadFile("../internal/db/init.sql")
+	script, err := os.ReadFile("../../internal/db/init.sql")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cannot read SQL file: %v\n", err)
 		os.Exit(1)

@@ -226,8 +226,20 @@ func getTopicIntervalState(targetTopic string, intervalSubmissions []Submission,
 
 //calculates mastery score (cur and peak) given slice of interval scores
 func calculateMasteryScore(binScores []float64) MasteryResult {
+	currentScore := calculateMasteryCurrentScore(binScores)
+	peakScore := currentScore
+	for i := 1; i < len(binScores); i++ {
+		score := calculateMasteryCurrentScore(binScores[i:])
+		if score > peakScore {
+			peakScore = score
+		}
+	}
+	return MasteryResult{currentScore, peakScore}
+}
+
+func calculateMasteryCurrentScore(binScores []float64) float64 {
 	if len(binScores) == 0 {
-		return MasteryResult{0, 0}
+		return 0
 	}
 
 	var p float64
@@ -238,7 +250,7 @@ func calculateMasteryScore(binScores []float64) MasteryResult {
 	}
 
 	if p == 0 {
-		return MasteryResult{0, 0}
+		return 0
 	}
 
 	const lambda = 0.05
@@ -257,9 +269,9 @@ func calculateMasteryScore(binScores []float64) MasteryResult {
 		denominator += totalWeight
 	}
 	if denominator == 0 {
-		return MasteryResult{0, 0}
+		return 0
 	}
-	return MasteryResult{numerator/math.Max(denominator, K), p}
+	return numerator/math.Max(denominator, K)
 }
 
 //helper for GetBinnedSubmissions. returns index of bin given a time and int n
@@ -405,7 +417,7 @@ func getUserMastery(handle string, tagMap map[string]string, ancestry models.Anc
 }
 
 func syncUser(conn *pgx.Conn, handle string, tagMap map[string]string, ancestry models.AncestryMap) error {
-	masteryResults, binStates, _, err := getUserMastery(handle, tagMap, ancestry)
+	masteryResults, binStates, problemsStatus, err := getUserMastery(handle, tagMap, ancestry)
     if err != nil {
         return err
     }
@@ -416,6 +428,32 @@ func syncUser(conn *pgx.Conn, handle string, tagMap map[string]string, ancestry 
 	}
 	defer tx.Rollback(context.Background())
 
+	for id, status := range problemsStatus {
+		statusStr := "attempted"
+		if status == 1 {
+			statusStr = "solved"
+		}
+
+		_, err = tx.Exec(context.Background(), `
+			INSERT INTO user_problems (handle, problem_id, status, last_attempted_at)
+			VALUES ($1, $2, $3, NOW())
+			ON CONFLICT (handle, problem_id) 
+			DO UPDATE SET 
+				-- Only update status if the new status is 'solved' 
+				-- or if the existing status was 'attempted'
+				status = CASE 
+					WHEN EXCLUDED.status = 'solved' THEN 'solved'
+					ELSE user_problems.status
+				END,
+				last_attempted_at = EXCLUDED.last_attempted_at`,
+			handle, id, statusStr)
+		
+		if err != nil {
+			return err
+		}
+	}
+
+	//inserting cur/peak score for each topic into the user_topic_stats table
 	for topic, mastery := range masteryResults {
 		_, err = tx.Exec(context.Background(), `
             INSERT INTO user_topic_stats (handle, topic_slug, mastery_score, peak_score, last_updated)
@@ -431,6 +469,7 @@ func syncUser(conn *pgx.Conn, handle string, tagMap map[string]string, ancestry 
 		}
 	}
 
+	//inserting each nonzero bin into the user_interval_stats table
 	for topic, bin := range binStates {
 		for binIdx, state := range bin {
 			_, err = tx.Exec(context.Background(), `
@@ -608,16 +647,41 @@ func refreshTopicMastery(tx pgx.Tx, handle string, topic string, currentBinIdx i
 		scores = append(scores, binMap[i])
 	}
 
-	result := calculateMasteryScore(scores)
+	result := calculateMasteryCurrentScore(scores)
 
 	_, err = tx.Exec(context.Background(), `
 		INSERT INTO user_topic_stats (handle, topic_slug, mastery_score, peak_score, last_updated)
-		VALUES ($1, $2, $3, $4, NOW())
+		VALUES ($1, $2, $3, $3, NOW())
 		ON CONFLICT (handle, topic_slug) DO UPDATE SET
 			mastery_score = EXCLUDED.mastery_score,
-			peak_score = GREATEST(user_topic_stats.peak_score, EXCLUDED.peak_score),
+			peak_score = GREATEST(user_topic_stats.peak_score, EXCLUDED.mastery_score),
 			last_updated = NOW()`,
-		handle, topic, result.Current, result.Peak)
+		handle, topic, result)
 
 	return err
+}
+
+func hydrateSubmission(conn *pgx.Conn, problem ProblemSolveInput) (Submission, error) {
+	var rating int
+    var tags []string
+
+    // One query to get everything we need
+    query := `SELECT rating, tags FROM problems WHERE problem_id = $1`
+    
+    err := conn.QueryRow(context.Background(), query, problem.ProblemID).Scan(&rating, &tags)
+    if err != nil {
+        if err == pgx.ErrNoRows {
+            return Submission{}, fmt.Errorf("problem %s not found in database", problem.ProblemID)
+        }
+        return Submission{}, err
+    }
+
+    return Submission{
+        ID: problem.ProblemID,
+        Rating: rating,
+        Attempts: problem.Attempts,
+        TopicSlugs: tags,
+        TimeSpentMinutes: problem.TimeSpentMinutes,
+        SolvedAt: time.Now(),
+    }, nil
 }

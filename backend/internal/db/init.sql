@@ -61,3 +61,13 @@ CREATE TABLE IF NOT EXISTS user_interval_stats (
 
     PRIMARY KEY (handle, topic_slug, bin_idx)
 );
+
+CREATE TABLE IF NOT EXISTS user_problems(
+    handle TEXT NOT NULL,
+    problem_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    last_attempted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (handle, problem_id)
+);
+
+CREATE INDEX idx_user_problems_status ON user_problems(handle, status);

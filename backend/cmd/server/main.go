@@ -14,11 +14,25 @@ import (
 	"github.com/tanaydonde/cf-curriculum-planner/backend/internal/mastery"
 )
 
+func test(service *mastery.MasteryService) {
+	problem := mastery.ProblemSolveInput{
+			ProblemID: "2181K",
+			Attempts: 3,
+			TimeSpentMinutes: 40,
+			}
+	service.UpdateSubmission("tanay5", problem)
+}
+
 func main() {
+	testing := false
 	conn := db.Connect()
 	defer conn.Close(context.Background())
 
 	service := mastery.NewMasteryService(conn)
+
+	if testing{
+		test(service)
+	}
 
 	h := &api.Handler{Conn: conn, Service: service,}
 

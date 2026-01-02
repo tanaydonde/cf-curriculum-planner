@@ -24,6 +24,10 @@ func (s *MasteryService) RefreshAndGetAllStats(handle string) (map[string]Master
     return refreshAndGetAllStats(s.conn, handle, s.tagMap)
 }
 
-func (s *MasteryService) UpdateSubmission(handle string, submission Submission) error {
-    return updateSubmission(s.conn, handle, submission, s.tagMap, s.ancestry)
+func (s *MasteryService) UpdateSubmission(handle string, problem ProblemSolveInput) error {
+    sub, err := hydrateSubmission(s.conn, problem)
+    if err != nil {
+        return err
+    }
+    return updateSubmission(s.conn, handle, sub, s.tagMap, s.ancestry)
 }

@@ -40,3 +40,9 @@ type BinState struct {
     Credits []float64
     Multipliers []float64
 }
+
+type ProblemSolveInput struct {
+	ProblemID string `json:"problem_id"`
+    Attempts int `json:"attempts"`
+    TimeSpentMinutes int `json:"time_spent_minutes"`
+}
