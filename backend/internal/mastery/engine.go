@@ -529,8 +529,18 @@ func updateSubmission(conn *pgx.Conn, handle string, submission Submission, tagM
     }
     defer tx.Rollback(context.Background())
 
-	topics := getTopics(tagMap)
+	_, err = tx.Exec(context.Background(), `
+        INSERT INTO user_problems (handle, problem_id, status, last_attempted_at)
+        VALUES ($1, $2, 'solved', $3)
+        ON CONFLICT (handle, problem_id) DO UPDATE SET
+            status = 'solved',
+            last_attempted_at = EXCLUDED.last_attempted_at`,
+        handle, submission.ID, submission.SolvedAt)
+    if err != nil {
+        return err
+    }
 
+	topics := getTopics(tagMap)
 	for topic := range topics {
 		multiplier := getMultiplier(topic, submission, ancestry)
 
