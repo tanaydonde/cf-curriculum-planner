@@ -5,26 +5,6 @@ CREATE TABLE IF NOT EXISTS problems (
     tags TEXT[]
 );
 
-DO $$ BEGIN 
-    CREATE TYPE solve_status as ENUM ('solved', 'partially_solved', 'failed');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
-
-CREATE TABLE IF NOT EXISTS user_logs (
-    id SERIAL PRIMARY KEY,
-    handle TEXT NOT NULL,
-    problem_id TEXT REFERENCES problems(problem_id),
-    status solve_status NOT NULL,
-
-    -- time_spent_minutes is NULL when data is unavailable
-    time_spent_minutes INT,
-
-    submission_count INT DEFAULT 1,
-    is_api_synced BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
 CREATE TABLE IF NOT EXISTS topics (
     id SERIAL PRIMARY KEY,
     slug TEXT UNIQUE NOT NULL,
@@ -70,4 +50,4 @@ CREATE TABLE IF NOT EXISTS user_problems(
     PRIMARY KEY (handle, problem_id)
 );
 
-CREATE INDEX idx_user_problems_status ON user_problems(handle, status);
+CREATE INDEX IF NOT EXISTS idx_user_problems_status ON user_problems(handle, status);

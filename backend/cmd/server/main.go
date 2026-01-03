@@ -15,16 +15,17 @@ import (
 )
 
 func test(service *mastery.MasteryService) {
-	problem := mastery.ProblemSolveInput{
-			ProblemID: "2181K",
-			Attempts: 3,
-			TimeSpentMinutes: 40,
-			}
-	service.UpdateSubmission("tanay5", problem)
+	service.Sync("tanay5")
+	// problem := mastery.ProblemSolveInput{
+	// 		ProblemID: "2181K",
+	// 		Attempts: 3,
+	// 		TimeSpentMinutes: 40,
+	// 		}
+	// service.UpdateSubmission("tanay5", problem)
 }
 
 func main() {
-	testing := false
+	testing := true
 	conn := db.Connect()
 	defer conn.Close(context.Background())
 
@@ -32,6 +33,7 @@ func main() {
 
 	if testing{
 		test(service)
+		fmt.Println("test succeeded")
 	}
 
 	h := &api.Handler{Conn: conn, Service: service,}

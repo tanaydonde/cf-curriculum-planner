@@ -156,9 +156,9 @@ func getBaseRatingTime(rating int, attempts int, timeSpentMinutes int) float64 {
 }
 
 //calculates M given a B(j) and multipliers(j) for all j in the interval
-func calculateIntervalBin(solves []SolveAttributes) BinState {
+func calculateIntervalBin(solves []SolveAttributes) float64 {
 	if len(solves) == 0 {
-		return BinState{0, nil, nil}
+		return 0
 	}
 
 	var p float64 //max of c
@@ -174,7 +174,7 @@ func calculateIntervalBin(solves []SolveAttributes) BinState {
 	}
 
 	if p == 0 {
-		return BinState{0, credits, multiplier}
+		return 0
 	}
 
 	var numerator, denominator float64
@@ -190,7 +190,7 @@ func calculateIntervalBin(solves []SolveAttributes) BinState {
 	denominator = math.Max(denominator, K)
 	score := numerator/denominator
 
-	return BinState{score, credits, multiplier}
+	return score
 }
 
 func getMultiplier(targetTopic string, submission Submission, ancestry models.AncestryMap) float64 {
@@ -208,20 +208,6 @@ func getMultiplier(targetTopic string, submission Submission, ancestry models.An
 		multiplier = math.Pow(0.75, float64(minDist))
 	}
 	return multiplier
-}
-
-//computed M(i, T) given T and the array of submissions at interval i. uses calculateIntervalBin and getBaseRating
-func getTopicIntervalState(targetTopic string, intervalSubmissions []Submission, ancestry models.AncestryMap) BinState {
-	var attributes []SolveAttributes
-	
-	for _, submission := range intervalSubmissions {
-		multiplier := getMultiplier(targetTopic, submission, ancestry)
-		if multiplier > 0 {
-			base := getBaseRating(submission.Rating, submission.Attempts)
-			attributes = append(attributes, SolveAttributes{base, multiplier})
-		}
-	}
-	return calculateIntervalBin(attributes)
 }
 
 //calculates mastery score (cur and peak) given slice of interval scores
@@ -274,236 +260,12 @@ func calculateMasteryCurrentScore(binScores []float64) float64 {
 	return numerator/math.Max(denominator, K)
 }
 
-//helper for GetBinnedSubmissions. returns index of bin given a time and int n
+//returns index of bin given a time
 func getAbsoluteBinIdx(t time.Time) int {
     return int(t.Unix() / int64(N*86400))
 }
 
-//takes all submissions and an int n and groups them into n-day intervals
-func getBinnedSubmissions(submissions []Submission) map[int][]Submission {
-	binToSub := make(map[int][]Submission)
-    
-    for _, sub := range submissions {
-        idx := getAbsoluteBinIdx(sub.SolvedAt)
-        binToSub[idx] = append(binToSub[idx], sub)
-    }
-    return binToSub
-}
-
-func indexBinMap(binIdxToState map[int]BinState, minIdx int, currentBinIdx int) []float64 {
-	var scoresForDecay []float64
-	for i := currentBinIdx; i >= minIdx; i-- {
-		if val, ok := binIdxToState[i]; ok {
-			scoresForDecay = append(scoresForDecay, val.Score)
-		} else {
-			scoresForDecay = append(scoresForDecay, 0)
-		}
-	}
-	return scoresForDecay
-}
-
-//returns a map, mapping each topic to its current mastery score and peak mastery score
-func calculateAllTopicMasteries(topics []string, submissions []Submission, ancestry models.AncestryMap) (map[string]MasteryResult, map[string]map[int]BinState) {
-	results := make(map[string]MasteryResult)
-	allStates := make(map[string]map[int]BinState)
-	binnedSubs := getBinnedSubmissions(submissions)
-	currentBinIdx := getAbsoluteBinIdx(time.Now())
-
-	for _, topicSlug := range topics {
-		binIdxToState := make(map[int]BinState)
-		minIdx := -1
-
-		for binIdx, intervalSubs := range binnedSubs {
-			state := getTopicIntervalState(topicSlug, intervalSubs, ancestry)
-			if state.Score > 0{
-				binIdxToState[binIdx] = state
-				if minIdx == -1 || binIdx < minIdx {
-					minIdx = binIdx
-				}
-			}
-		}
-
-		if len(binIdxToState) == 0 {
-            results[topicSlug] = MasteryResult{0, 0}
-            continue
-        }
-
-		scoresForDecay := indexBinMap(binIdxToState, minIdx, currentBinIdx)
-
-		cur := calculateMasteryScore(scoresForDecay)
-
-		results[topicSlug] = cur
-		allStates[topicSlug] = binIdxToState
-	}
-
-	return results, allStates
-}
-
-//takes in the handle and other parameters. returns cur mastery score, peak mastery score, and problems solved/failed
-func getUserMastery(handle string, tagMap map[string]string, ancestry models.AncestryMap) (map[string]MasteryResult, map[string]map[int]BinState, map[string]int, error) {
-	url := fmt.Sprintf("https://codeforces.com/api/user.status?handle=%s", handle)
-
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	defer resp.Body.Close()
-
-	var data CFUserResponse
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, nil, nil, err
-	}
-
-	problemHistory := make(map[string][]CFSubmission)
-	for _, submission := range data.Result {
-		key := fmt.Sprintf("%d%s", submission.Problem.ContestID, submission.Problem.Index)
-		problemHistory[key] = append(problemHistory[key], submission)
-	}
-
-	var processed []Submission
-	problemsStatus := make(map[string]int)
-
-	for id, subs := range problemHistory {
-		var firstSolve *CFSubmission
-		//problems are last to first so need to go from end to find first OK
-		attempts := 1
-		for i := len(subs) - 1; i >= 0; i-- {
-			if subs[i].Verdict == "OK" {
-				firstSolve = &subs[i];
-				break
-			}
-			attempts++
-		}
-
-		if firstSolve == nil {
-			problemsStatus[id] = -1 //-1 means incomplete
-			continue
-		}
-		problemsStatus[id] = 1 //1 means complete
-		
-		var slugs []string
-		var tree bool
-		var dp bool
-		for _, tag := range firstSolve.Problem.Tags {
-			if topic, ok := tagMap[tag]; ok {
-				slugs = append(slugs, topic)
-			}
-			if tag == "trees" {
-				tree = true
-			}
-			if tag == "dp" {
-				dp = true
-			}
-		}
-		if tree && dp {
-			slugs = append(slugs, "tree dp")
-		}
-
-		processed = append(processed, Submission{
-			ID: id,
-			Rating: firstSolve.Problem.Rating,
-			Attempts: attempts,
-			TopicSlugs: slugs,
-			TimeSpentMinutes: 0,
-			SolvedAt: time.Unix(firstSolve.CreationTimeSeconds, 0),
-		})
-	}
-	topics := make([]string, 0, len(ancestry))
-	for slug := range ancestry {
-		topics = append(topics, slug)
-	}
-	masteryResults, binStates := calculateAllTopicMasteries(topics, processed, ancestry)
-	return masteryResults, binStates, problemsStatus, nil
-}
-
-func syncUser(conn *pgx.Conn, handle string, tagMap map[string]string, ancestry models.AncestryMap) error {
-	masteryResults, binStates, problemsStatus, err := getUserMastery(handle, tagMap, ancestry)
-    if err != nil {
-        return err
-    }
-
-	tx, err := conn.Begin(context.Background())
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(context.Background())
-
-	for id, status := range problemsStatus {
-		statusStr := "attempted"
-		if status == 1 {
-			statusStr = "solved"
-		}
-
-		_, err = tx.Exec(context.Background(), `
-			INSERT INTO user_problems (handle, problem_id, status, last_attempted_at)
-			VALUES ($1, $2, $3, NOW())
-			ON CONFLICT (handle, problem_id) 
-			DO UPDATE SET 
-				-- Only update status if the new status is 'solved' 
-				-- or if the existing status was 'attempted'
-				status = CASE 
-					WHEN EXCLUDED.status = 'solved' THEN 'solved'
-					ELSE user_problems.status
-				END,
-				last_attempted_at = EXCLUDED.last_attempted_at`,
-			handle, id, statusStr)
-		
-		if err != nil {
-			return err
-		}
-	}
-
-	//inserting cur/peak score for each topic into the user_topic_stats table
-	for topic, mastery := range masteryResults {
-		_, err = tx.Exec(context.Background(), `
-            INSERT INTO user_topic_stats (handle, topic_slug, mastery_score, peak_score, last_updated)
-            VALUES ($1, $2, $3, $4, NOW())
-            ON CONFLICT (handle, topic_slug) 
-            DO UPDATE SET 
-                mastery_score = EXCLUDED.mastery_score,
-                peak_score = GREATEST(user_topic_stats.peak_score, EXCLUDED.peak_score),
-                last_updated = NOW()`,
-            handle, topic, mastery.Current, mastery.Peak)
-		if err != nil {
-			return err
-		}
-	}
-
-	//inserting each nonzero bin into the user_interval_stats table
-	for topic, bin := range binStates {
-		for binIdx, state := range bin {
-			_, err = tx.Exec(context.Background(), `
-                INSERT INTO user_interval_stats (handle, topic_slug, bin_idx, bin_score, credits, multipliers, last_updated)
-                VALUES ($1, $2, $3, $4, $5, $6, NOW())
-                ON CONFLICT (handle, topic_slug, bin_idx)
-                DO UPDATE SET
-                    bin_score = EXCLUDED.bin_score,
-                    credits = EXCLUDED.credits,
-                    multipliers = EXCLUDED.multipliers,
-                    last_updated = NOW()`,
-                handle, topic, binIdx, state.Score, state.Credits, state.Multipliers)
-            if err != nil {
-                return err
-            }
-		}
-	}
-	return tx.Commit(context.Background())
-}
-
-func getUserTopicStats(tx pgx.Tx, handle string, topic string) (float64, float64, error) {
-	var cur, peak float64
-	query := `SELECT mastery_score, peak_score FROM user_topic_stats WHERE handle = $1 AND topic_slug = $2`
-	
-	err := tx.QueryRow(context.Background(), query, handle, topic).Scan(&cur, &peak)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			return 0, 0, nil
-		}
-		return 0, 0, err
-	}
-	return cur, peak, nil
-}
-
+//returns all topics
 func getTopics(tagMap map[string]string) map[string]bool {
 	topics := make(map[string]bool)
 	topics["tree dp"] = true
@@ -513,7 +275,148 @@ func getTopics(tagMap map[string]string) map[string]bool {
 	return topics
 }
 
-func updateSubmission(conn *pgx.Conn, handle string, submission Submission, tagMap map[string]string, ancestry models.AncestryMap) error {
+//returns all topic slugs for a problem given a slice of its tags
+func getTopicSlugs(problemTags []string, tagMap map[string]string) []string {
+	tagSlugMap := make(map[string]bool)
+	tree := false
+	dp := false
+	for _, topic := range problemTags {
+		if tag, ok := tagMap[topic]; ok {
+			tagSlugMap[tag] = true
+			if tag == "trees" {
+				tree = true
+			}
+			if tag == "dp" {
+				dp = true
+			}
+		}
+	}
+	if tree && dp {
+		tagSlugMap["tree dp"] = true
+	}
+	var tagSlug []string
+	for tag := range tagSlugMap {
+		tagSlug = append(tagSlug, tag)
+	}
+	return tagSlug
+}
+
+func syncUser(conn *pgx.Conn, handle string, tagMap map[string]string, ancestry models.AncestryMap) error {
+	url := fmt.Sprintf("https://codeforces.com/api/user.status?handle=%s", handle)
+    resp, err := http.Get(url)
+    if err != nil {
+		return err
+	}
+    defer resp.Body.Close()
+
+	var data CFUserResponse
+    json.NewDecoder(resp.Body).Decode(&data)
+
+	//gets problems already solved
+    existingSolved := make(map[string]bool)
+    rows, _ := conn.Query(context.Background(), "SELECT problem_id FROM user_problems WHERE handle = $1 AND status = 'solved'", handle)
+    for rows.Next() {
+        var id string
+        rows.Scan(&id)
+        existingSolved[id] = true
+    }
+    rows.Close()
+
+	//fills problemHistory which contains information about all problems the user attempted which isn't in our db
+    problemHistory := make(map[string][]CFSubmission)
+    for _, s := range data.Result {
+        id := fmt.Sprintf("%d%s", s.Problem.ContestID, s.Problem.Index)
+        if !existingSolved[id] {
+            problemHistory[id] = append(problemHistory[id], s)
+        }
+    }
+
+	nowBinIdx := getAbsoluteBinIdx(time.Now())
+
+	tx, err := conn.Begin(context.Background())
+    if err != nil {
+		return err
+	}
+    defer tx.Rollback(context.Background())
+
+    for id, subs := range problemHistory {
+        var firstOK *CFSubmission
+        attempts := 0
+        for i := len(subs) - 1; i >= 0; i-- {
+            attempts++
+            if subs[i].Verdict == "OK" {
+                firstOK = &subs[i]
+                break
+            }
+        }
+		//if the user solved it call updateSubmission to update the problems solved
+		if firstOK != nil {
+            sub := Submission{
+                ID: id,
+                Rating: firstOK.Problem.Rating,
+                Attempts: attempts,
+                TopicSlugs: getTopicSlugs(firstOK.Problem.Tags, tagMap),
+                SolvedAt: time.Unix(firstOK.CreationTimeSeconds, 0),
+            }
+            
+            err := updateSubmission(tx, handle, sub, tagMap, ancestry)
+			if err != nil {
+				return err
+			}
+        } else { //if the user didn't solve it, add into unsolved problems
+			firstOK = &subs[0]
+			_, err = tx.Exec(context.Background(), `
+			INSERT INTO user_problems (handle, problem_id, status, last_attempted_at)
+			VALUES ($1, $2, 'unsolved', $3)
+			ON CONFLICT (handle, problem_id) DO UPDATE SET
+        		status = CASE 
+            		WHEN user_problems.status = 'solved' THEN 'solved'
+            		ELSE EXCLUDED.status
+        		END,
+        	last_attempted_at = GREATEST(user_problems.last_attempted_at, EXCLUDED.last_attempted_at)`,
+			handle, id, time.Unix(firstOK.CreationTimeSeconds, 0))
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+    for topic := range getTopics(tagMap) {
+        fillTopicMastery(tx, handle, topic, nowBinIdx)
+    }
+    return tx.Commit(context.Background())
+}
+
+func updateSubmissionFull(conn *pgx.Conn, handle string, problem ProblemSolveInput, tagMap map[string]string, ancestry models.AncestryMap) error {
+	sub, err := hydrateSubmission(conn, problem)
+    if err != nil {
+        return err
+    }
+	tx, err := conn.Begin(context.Background())
+    if err != nil {
+		return err
+	}
+    defer tx.Rollback(context.Background())
+
+	err = updateSubmission(tx, handle, sub, tagMap, ancestry)
+	if err != nil {
+		return err
+	}
+
+	nowBinIdx := getAbsoluteBinIdx(time.Now())
+	
+	topics := getTopics(tagMap)
+    for topic := range topics {
+        if err := refreshTopicMastery(tx, handle, topic, nowBinIdx); err != nil {
+            return err
+        }
+    }
+
+	return tx.Commit(context.Background())
+}
+
+//given a submission and handle, it updates all topics in the db
+func updateSubmission(tx pgx.Tx, handle string, submission Submission, tagMap map[string]string, ancestry models.AncestryMap) error {
 	var base float64
 	if submission.TimeSpentMinutes > 0 {
 		base = getBaseRatingTime(submission.Rating, submission.Attempts, submission.TimeSpentMinutes)
@@ -521,15 +424,8 @@ func updateSubmission(conn *pgx.Conn, handle string, submission Submission, tagM
 		base = getBaseRating(submission.Rating, submission.Attempts)
 	}
 	solveBinIdx := getAbsoluteBinIdx(submission.SolvedAt)
-	nowBinIdx := getAbsoluteBinIdx(time.Now())
 
-	tx, err := conn.Begin(context.Background())
-    if err != nil {
-        return err
-    }
-    defer tx.Rollback(context.Background())
-
-	_, err = tx.Exec(context.Background(), `
+	_, err := tx.Exec(context.Background(), `
         INSERT INTO user_problems (handle, problem_id, status, last_attempted_at)
         VALUES ($1, $2, 'solved', $3)
         ON CONFLICT (handle, problem_id) DO UPDATE SET
@@ -551,16 +447,13 @@ func updateSubmission(conn *pgx.Conn, handle string, submission Submission, tagM
 			if err != nil {
 				return err
 			}
-			err = refreshTopicMastery(tx, handle, topic, nowBinIdx)
-			if err != nil {
-				return err
-			}
 		}
 	}
 
-	return tx.Commit(context.Background())
+	return nil
 }
 
+//adds credit, multiplier into (handle, topic, binIdx) and updates the bin score
 func updateBinStats(tx pgx.Tx, handle string, topic string, binIdx int, credit float64, multiplier float64) error {
 	var credits, multipliers []float64
 	err := tx.QueryRow(context.Background(), `
@@ -579,7 +472,7 @@ func updateBinStats(tx pgx.Tx, handle string, topic string, binIdx int, credit f
 	for i := range credits {
 		attributes = append(attributes, SolveAttributes{BaseRating: credits[i] / multipliers[i], Multiplier: multipliers[i]})
 	}
-	newBinState := calculateIntervalBin(attributes)
+	newBinScore := calculateIntervalBin(attributes)
 
 	_, err = tx.Exec(context.Background(), `
 		INSERT INTO user_interval_stats (handle, topic_slug, bin_idx, bin_score, credits, multipliers, last_updated)
@@ -589,7 +482,7 @@ func updateBinStats(tx pgx.Tx, handle string, topic string, binIdx int, credit f
 			credits = EXCLUDED.credits,
 			multipliers = EXCLUDED.multipliers,
 			last_updated = NOW()`,
-		handle, topic, binIdx, newBinState.Score, credits, multipliers)
+		handle, topic, binIdx, newBinScore, credits, multipliers)
 
 	return err
 }
@@ -626,13 +519,14 @@ func refreshAndGetAllStats(conn *pgx.Conn, handle string, tagMap map[string]stri
 	return mastery, nil
 }
 
-func refreshTopicMastery(tx pgx.Tx, handle string, topic string, currentBinIdx int) error {
+func getTopicScoresArr(tx pgx.Tx, handle string, topic string, currentBinIdx int) ([]float64, error) {
+	var scores []float64
 	rows, err := tx.Query(context.Background(), `
 		SELECT bin_idx, bin_score FROM user_interval_stats 
 		WHERE handle = $1 AND topic_slug = $2 ORDER BY bin_idx DESC`, 
 		handle, topic)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -649,12 +543,39 @@ func refreshTopicMastery(tx pgx.Tx, handle string, topic string, currentBinIdx i
 	}
 
 	if len(binMap) == 0 {
-		return nil
+		return scores, nil
 	}
 
-	var scores []float64
 	for i := currentBinIdx; i >= minIdx; i-- {
 		scores = append(scores, binMap[i])
+	}
+	return scores, nil
+}
+
+func fillTopicMastery(tx pgx.Tx, handle string, topic string, currentBinIdx int) error {
+	scores, err := getTopicScoresArr(tx, handle, topic, currentBinIdx)
+	if err != nil {
+		return err
+	}
+
+	result := calculateMasteryScore(scores)
+
+	_, err = tx.Exec(context.Background(), `
+		INSERT INTO user_topic_stats (handle, topic_slug, mastery_score, peak_score, last_updated)
+		VALUES ($1, $2, $3, $4, NOW())
+		ON CONFLICT (handle, topic_slug) DO UPDATE SET
+			mastery_score = EXCLUDED.mastery_score,
+			peak_score = EXCLUDED.peak_score,
+			last_updated = NOW()`,
+		handle, topic, result.Current, result.Peak)
+
+	return err
+}
+
+func refreshTopicMastery(tx pgx.Tx, handle string, topic string, currentBinIdx int) error {
+	scores, err := getTopicScoresArr(tx, handle, topic, currentBinIdx)
+	if err != nil {
+		return err
 	}
 
 	result := calculateMasteryCurrentScore(scores)
@@ -669,6 +590,20 @@ func refreshTopicMastery(tx pgx.Tx, handle string, topic string, currentBinIdx i
 		handle, topic, result)
 
 	return err
+}
+
+func getUserTopicStats(tx pgx.Tx, handle string, topic string) (float64, float64, error) {
+	var cur, peak float64
+	query := `SELECT mastery_score, peak_score FROM user_topic_stats WHERE handle = $1 AND topic_slug = $2`
+	
+	err := tx.QueryRow(context.Background(), query, handle, topic).Scan(&cur, &peak)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return 0, 0, nil
+		}
+		return 0, 0, err
+	}
+	return cur, peak, nil
 }
 
 func hydrateSubmission(conn *pgx.Conn, problem ProblemSolveInput) (Submission, error) {

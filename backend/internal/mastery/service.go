@@ -25,9 +25,5 @@ func (s *MasteryService) RefreshAndGetAllStats(handle string) (map[string]Master
 }
 
 func (s *MasteryService) UpdateSubmission(handle string, problem ProblemSolveInput) error {
-    sub, err := hydrateSubmission(s.conn, problem)
-    if err != nil {
-        return err
-    }
-    return updateSubmission(s.conn, handle, sub, s.tagMap, s.ancestry)
+    return updateSubmissionFull(s.conn, handle, problem, s.tagMap, s.ancestry)
 }
