@@ -16,16 +16,16 @@ import (
 
 func test(service *mastery.MasteryService) {
 	service.Sync("tanay5")
-	// problem := mastery.ProblemSolveInput{
-	// 		ProblemID: "2181K",
-	// 		Attempts: 3,
-	// 		TimeSpentMinutes: 40,
-	// 		}
-	// service.UpdateSubmission("tanay5", problem)
+	problem := mastery.ProblemSolveInput{
+			ProblemID: "2181K",
+			Attempts: 3,
+			TimeSpentMinutes: 40,
+			}
+	service.UpdateSubmission("tanay5", problem)
 }
 
 func main() {
-	testing := true
+	testing := false
 	conn := db.Connect()
 	defer conn.Close(context.Background())
 
@@ -54,6 +54,7 @@ func main() {
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/problems/{topic}", h.GetProblemsByTopic)
 		r.Get("/graph", h.GetGraphHandler)
+		r.Get("/stats/{handle}", h.GetUserStats)
 		r.Post("/sync/{handle}", h.SyncUserHandler)
 	})
 

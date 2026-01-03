@@ -52,3 +52,17 @@ func (h *Handler) SyncUserHandler(w http.ResponseWriter, r *http.Request) {
     }
     w.Write([]byte("Sync successful"))
 }
+
+func (h *Handler) GetUserStats(w http.ResponseWriter, r *http.Request) {
+    handle := chi.URLParam(r, "handle")
+    
+    // This reuses your existing service logic
+    stats, err := h.Service.RefreshAndGetAllStats(handle) 
+    if err != nil {
+        http.Error(w, err.Error(), 500)
+        return
+    }
+    
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(stats)
+}

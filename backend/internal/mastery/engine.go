@@ -286,7 +286,7 @@ func getTopicSlugs(problemTags []string, tagMap map[string]string) []string {
 			if tag == "trees" {
 				tree = true
 			}
-			if tag == "dp" {
+			if tag == "dynamic programming" {
 				dp = true
 			}
 		}
@@ -311,6 +311,10 @@ func syncUser(conn *pgx.Conn, handle string, tagMap map[string]string, ancestry 
 
 	var data CFUserResponse
     json.NewDecoder(resp.Body).Decode(&data)
+
+	if data.Status == "FAILED" {
+        return fmt.Errorf("handle '%s' not found or invalid", handle)
+    }
 
 	//gets problems already solved
     existingSolved := make(map[string]bool)
