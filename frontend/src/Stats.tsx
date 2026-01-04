@@ -206,7 +206,12 @@ const Stats = () => {
             <h3 className="text-slate-400 text-sm font-mono uppercase tracking-wider mb-4 ml-2">Highest Decay (Needs Practice)</h3>
             <div className="flex-1 min-h-0 overflow-y-auto pr-2">
               {[...data]
-                .sort((a, b) => b.decay - a.decay)
+                .sort((a, b) =>{
+                  const decayDiff = b.decay - a.decay;
+                  if (decayDiff !== 0) return decayDiff;
+
+                  return b.current - a.current;
+                })
                 .map((item) => {
                   const colorStyle = getDecayColorStyle(item.decay);
                   return (

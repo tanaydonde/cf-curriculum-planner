@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -347,6 +349,9 @@ func syncUser(conn *pgx.Conn, handle string, tagMap map[string]string, ancestry 
         var firstOK *CFSubmission
         attempts := 0
         for i := len(subs) - 1; i >= 0; i-- {
+			if subs[i].Verdict == "COMPILATION_ERROR" || subs[i].Verdict == "SKIPPED" || subs[i].Verdict == "TESTING" {
+				continue
+			}
             attempts++
             if subs[i].Verdict == "OK" {
                 firstOK = &subs[i]
@@ -392,7 +397,17 @@ func syncUser(conn *pgx.Conn, handle string, tagMap map[string]string, ancestry 
 }
 
 func updateSubmissionFull(conn *pgx.Conn, handle string, problem ProblemSolveInput, tagMap map[string]string, ancestry models.AncestryMap) error {
-	sub, err := hydrateSubmission(conn, problem)
+
+	var problemStatus string
+    err := conn.QueryRow(context.Background(), 
+        "SELECT status FROM user_problems WHERE handle=$1 AND problem_id=$2", 
+        handle, problem.ProblemID).Scan(&problemStatus)
+
+    if err == nil && problemStatus == "solved" {
+        return fmt.Errorf("problem %s already solved", problem.ProblemID)
+    }
+
+	sub, err := hydrateSubmission(handle, problem, tagMap)
     if err != nil {
         return err
     }
@@ -610,32 +625,74 @@ func getUserTopicStats(tx pgx.Tx, handle string, topic string) (float64, float64
 	return cur, peak, nil
 }
 
-func hydrateSubmission(conn *pgx.Conn, problem ProblemSolveInput) (Submission, error) {
-	var rating int
-    var tags []string
+func hydrateSubmission(handle string, problem ProblemSolveInput, tagMap map[string]string) (Submission, error) {
+	url := fmt.Sprintf("https://codeforces.com/api/user.status?handle=%s", handle)
+	resp, err := http.Get(url)
+	if err != nil {
+		return Submission{}, fmt.Errorf("misc fail: %w", err)
+	}
+	defer resp.Body.Close()
 
-    // One query to get everything we need
-    query := `SELECT rating, tags FROM problems WHERE problem_id = $1`
-    
-    err := conn.QueryRow(context.Background(), query, problem.ProblemID).Scan(&rating, &tags)
-    if err != nil {
-        if err == pgx.ErrNoRows {
-            return Submission{}, fmt.Errorf("problem %s not found in database", problem.ProblemID)
-        }
-        return Submission{}, err
-    }
+	var data CFUserResponse
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return Submission{}, fmt.Errorf("misc fail: %w", err)
+	}
+
+	if data.Status != "OK" {
+		return Submission{}, fmt.Errorf("misc fail")
+	}
+
+	re := regexp.MustCompile(`^(\d+)([A-Za-z0-9]+)$`)
+	matches := re.FindStringSubmatch(problem.ProblemID)
+	if len(matches) != 3 {
+		return Submission{}, fmt.Errorf("invalid problem id: %s", problem.ProblemID)
+	}
+	targetContestID, _ := strconv.Atoi(matches[1])
+	targetIndex := matches[2]
+
+	var problemSubs []CFSubmission
+	for _, s := range data.Result {
+		if s.Problem.ContestID == targetContestID && s.Problem.Index == targetIndex {
+			problemSubs = append(problemSubs, s)
+		}
+	}
+
+	attempts := 0
+	var firstOK *CFSubmission
+
+	for i := len(problemSubs) - 1; i >= 0; i-- {
+		s := problemSubs[i]
+		
+		if s.Verdict == "COMPILATION_ERROR" || s.Verdict == "SKIPPED" || s.Verdict == "TESTING" {
+			continue
+		}
+		
+		attempts++
+		
+		if s.Verdict == "OK" {
+			firstOK = &s
+			break
+		}
+	}
+	if firstOK == nil {
+		return Submission{}, fmt.Errorf("problem %s has not been solved", problem.ProblemID)
+	}
+
+	rating := firstOK.Problem.Rating
+
+	tags := getTopicSlugs(firstOK.Problem.Tags, tagMap)
 
     return Submission{
         ID: problem.ProblemID,
         Rating: rating,
-        Attempts: problem.Attempts,
+        Attempts: attempts,
         TopicSlugs: tags,
         TimeSpentMinutes: problem.TimeSpentMinutes,
-        SolvedAt: time.Now(),
+        SolvedAt: time.Unix(firstOK.CreationTimeSeconds, 0),
     }, nil
 }
 
-func recommendProblem(conn *pgx.Conn, handle string, topic string, k int) ([]CFProblemOutput, error) {
+func recommendProblem(conn *pgx.Conn, handle string, topic string, targetInc int, k int) ([]CFProblemOutput, error) {
 	userRatings := make(map[string]int)
 	
 	rows, err := conn.Query(context.Background(), `
@@ -658,7 +715,8 @@ func recommendProblem(conn *pgx.Conn, handle string, topic string, k int) ([]CFP
 
 	currentMainRating := max(userRatings[topic], 800)
 
-	targetRating := currentMainRating + 49
+	targetRating := currentMainRating + targetInc
+	targetRating = max(targetRating, 800)
 	
 	query := `
 		SELECT problem_id, name, rating, tags

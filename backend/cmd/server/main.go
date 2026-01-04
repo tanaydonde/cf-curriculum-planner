@@ -16,7 +16,7 @@ import (
 
 func test(service *mastery.MasteryService) {
 	//service.Sync("tourist")
-	recProblems, _ := service.RecommendProblem("tanay5", "greedy", 5)
+	recProblems, _ := service.RecommendProblem("tanay5", "greedy", 300, 5)
 	for _, problem := range recProblems {
 		fmt.Printf("[%d] %s (%s) Tags: %v\n", problem.Rating, problem.Name, problem.ID, problem.Tags)
 	}
@@ -32,6 +32,7 @@ func main() {
 	if testing{
 		test(service)
 		fmt.Println("test succeeded")
+		return
 	}
 
 	h := &api.Handler{Conn: conn, Service: service,}
@@ -50,10 +51,11 @@ func main() {
 	}))
 
 	r.Route("/api", func(r chi.Router) {
-		r.Get("/problems/{topic}", h.GetProblemsByTopic)
+		r.Get("/problems/{topic}", h.GetProblemsByTopic) // /api/problems/{topic}?handle=[handle]&inc=[inc]
 		r.Get("/graph", h.GetGraphHandler)
 		r.Get("/stats/{handle}", h.GetUserStats)
 		r.Post("/sync/{handle}", h.SyncUserHandler)
+		r.Post("/submit/{handle}", h.SubmitProblemHandler)
 	})
 
 	port := ":8080"

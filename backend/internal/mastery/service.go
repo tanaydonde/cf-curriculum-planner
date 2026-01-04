@@ -28,6 +28,6 @@ func (s *MasteryService) UpdateSubmission(handle string, problem ProblemSolveInp
     return updateSubmissionFull(s.conn, handle, problem, s.tagMap, s.ancestry)
 }
 
-func (s *MasteryService) RecommendProblem(handle string, topic string, k int) ([]CFProblemOutput, error) {
-    return recommendProblem(s.conn, handle, topic, k)
+func (s *MasteryService) RecommendProblem(handle string, topic string, targetInc int, k int) ([]CFProblemOutput, error) {
+    return recommendProblem(s.conn, handle, topic, targetInc, k)
 }

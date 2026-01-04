@@ -21,14 +21,14 @@ function App() {
       navigate('/');
     }
     if (!loading && handle && location.pathname === '/') {
-      navigate('/roadmap');
+      navigate('/skill-tree');
     }
   }, [handle, loading, navigate, location]);
 
   const handleLoginSuccess = (newHandle: string) => {
     localStorage.setItem('cf_handle', newHandle);
     setHandle(newHandle);
-    navigate('/roadmap');
+    navigate('/skill-tree');
   };
 
   const handleLogout = () => {
@@ -52,12 +52,12 @@ function App() {
             
             <div className="flex gap-4">
               <NavLink 
-                to="/roadmap" 
+                to="/skill-tree" 
                 className={({ isActive }) => 
                   `hover:text-sky-400 transition-colors ${isActive ? 'text-sky-400 font-bold' : 'text-slate-400'}`
                 }
               >
-                ROADMAP
+                SKILL-TREE
               </NavLink>
               <NavLink 
                 to="/stats" 
@@ -87,7 +87,7 @@ function App() {
       <main className="flex-1 overflow-hidden relative">
         <Routes>
           <Route path="/" element={<LandingPage onSuccess={handleLoginSuccess} />} />
-          <Route path="/roadmap" element={handle ? <Roadmap /> : <Navigate to="/" />} />
+          <Route path="/skill-tree" element={handle ? <Roadmap /> : <Navigate to="/" />} />
           <Route path="/stats" element={handle ? <Stats /> : <Navigate to="/" />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
