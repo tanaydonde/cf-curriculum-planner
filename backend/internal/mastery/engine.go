@@ -634,3 +634,101 @@ func hydrateSubmission(conn *pgx.Conn, problem ProblemSolveInput) (Submission, e
         SolvedAt: time.Now(),
     }, nil
 }
+
+func recommendProblem(conn *pgx.Conn, handle string, topic string, k int) ([]CFProblemOutput, error) {
+	userRatings := make(map[string]int)
+	
+	rows, err := conn.Query(context.Background(), `
+		SELECT topic_slug, CAST(mastery_score AS INTEGER) 
+		FROM user_topic_stats 
+		WHERE handle = $1`, handle)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch user stats: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var slug string
+		var score int
+		if err := rows.Scan(&slug, &score); err != nil {
+			return nil, err
+		}
+		userRatings[slug] = score
+	}
+
+	currentMainRating := max(userRatings[topic], 800)
+
+	targetRating := currentMainRating + 49
+	
+	query := `
+		SELECT problem_id, name, rating, tags
+		FROM problems p
+		WHERE $1 = ANY(tags)
+		AND rating BETWEEN $2 AND $3
+		AND NOT EXISTS (
+			SELECT 1 FROM user_problems up
+			WHERE up.handle = $4 
+			AND up.problem_id = p.problem_id
+			AND up.status = 'solved'
+		)
+		ORDER BY ABS(rating - $5) ASC
+		LIMIT 200
+	`
+
+	minRating := max(targetRating - 200, 800)
+	maxRating := targetRating + 200
+
+	pRows, err := conn.Query(context.Background(), query, topic, minRating, maxRating, handle, targetRating)
+	if err != nil {
+		return nil, err
+	}
+	defer pRows.Close()
+
+	var candidates []CFProblemOutput
+	for pRows.Next() {
+		var p CFProblemOutput
+		if err := pRows.Scan(&p.ID, &p.Name, &p.Rating, &p.Tags); err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, p)
+	}
+
+	finalRecommendations := make([]CFProblemOutput, 0, k)
+	added := make(map[string]bool)
+
+	margins := []int{50, 100, 150, 200, 300, 500, 1000}
+
+	for _, margin := range margins {
+		if len(finalRecommendations) >= k {
+			break
+		}
+		for _, problem := range candidates {
+			if len(finalRecommendations) >= k {
+				break
+			}
+			if added[problem.ID] {
+				continue
+			}
+			canAdd := true
+			
+			for _, tag := range problem.Tags {
+				if tag == topic {
+					continue
+				}
+
+				curTopicRating := max(userRatings[tag], 800)
+
+				if problem.Rating > (curTopicRating + margin) {
+					canAdd = false
+					break
+				}
+			}
+
+			if canAdd {
+				finalRecommendations = append(finalRecommendations, problem)
+				added[problem.ID] = true
+			}
+		}
+	}
+	return finalRecommendations, nil
+}

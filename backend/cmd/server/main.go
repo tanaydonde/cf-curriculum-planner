@@ -15,13 +15,11 @@ import (
 )
 
 func test(service *mastery.MasteryService) {
-	service.Sync("tanay5")
-	problem := mastery.ProblemSolveInput{
-			ProblemID: "2181K",
-			Attempts: 3,
-			TimeSpentMinutes: 40,
-			}
-	service.UpdateSubmission("tanay5", problem)
+	//service.Sync("tourist")
+	recProblems, _ := service.RecommendProblem("tanay5", "greedy", 5)
+	for _, problem := range recProblems {
+		fmt.Printf("[%d] %s (%s) Tags: %v\n", problem.Rating, problem.Name, problem.ID, problem.Tags)
+	}
 }
 
 func main() {

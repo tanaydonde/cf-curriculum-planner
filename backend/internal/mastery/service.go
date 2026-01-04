@@ -27,3 +27,7 @@ func (s *MasteryService) RefreshAndGetAllStats(handle string) (map[string]Master
 func (s *MasteryService) UpdateSubmission(handle string, problem ProblemSolveInput) error {
     return updateSubmissionFull(s.conn, handle, problem, s.tagMap, s.ancestry)
 }
+
+func (s *MasteryService) RecommendProblem(handle string, topic string, k int) ([]CFProblemOutput, error) {
+    return recommendProblem(s.conn, handle, topic, k)
+}

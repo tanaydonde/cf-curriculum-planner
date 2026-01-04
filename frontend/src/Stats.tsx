@@ -154,7 +154,7 @@ const Stats = () => {
           </div>
 
           <StatCard 
-            title="Decay Factor" 
+            title="Skill Rust" 
             value={`-${peakRating - currentRating}`} 
             subtitle="Rating points lost to inactivity"
             type="decay"

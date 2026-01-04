@@ -35,14 +35,15 @@ type CFUserResponse struct {
 	Result []CFSubmission `json:"result"`
 }
 
-type BinState struct {
-	Score float64
-    Credits []float64
-    Multipliers []float64
-}
-
 type ProblemSolveInput struct {
 	ProblemID string `json:"problem_id"`
     Attempts int `json:"attempts"`
     TimeSpentMinutes int `json:"time_spent_minutes"`
+}
+
+type CFProblemOutput struct {
+	ID string `json:"id"`
+	Name string `json:"name"`
+	Rating int `json:"rating"`
+	Tags []string `json:"tags"`
 }
