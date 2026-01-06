@@ -36,7 +36,7 @@ func main() {
 
 	conn := db.Connect()
 
-	for i := range 8 {
+	for i := range 15 {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		err := conn.Ping(ctx)
 		cancel()
@@ -45,7 +45,7 @@ func main() {
 			break
 		}
 
-		if i == 7 {
+		if i == 14 {
 			log.Fatalf("database not reachable after retries: %v", err)
 		}
 

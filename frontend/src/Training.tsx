@@ -171,27 +171,31 @@ const Training = () => {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState(false);
 
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
-    fetch('http://localhost:8080/api/graph')
-      .then(res => res.json())
-      .then((data: { nodes: BackendNode[], edges: BackendEdge[] }) => {
-        
+    const fetchGraph = async () => {
+      try {
+        const res = await fetch('http://localhost:8080/api/graph');
+        if (!res.ok) throw new Error('failed to fetch graph');
+        const data: { nodes: BackendNode[]; edges: BackendEdge[] } = await res.json();
+
         const formattedNodes: Node[] = data.nodes.map((node) => ({
           id: node.id.toString(),
-          data: {label: node.display_name, slug: node.slug},
+          data: { label: node.display_name, slug: node.slug },
           position: POSITION_MAP[node.slug] || { x: 0, y: 0 },
           style: {
             background: '#1e293b',
             color: '#e5e7eb',
             borderRadius: 10,
-            border: '1px solid #374151', 
+            border: '1px solid #374151',
             padding: '12px 14px',
             width: 140,
             fontSize: 12,
             fontWeight: 500,
             textAlign: 'center',
             boxShadow: '0 0 0 1px rgba(56,189,248,0.35), 0 10px 30px rgba(0,0,0,0.55)',
-          }
+          },
         }));
 
         const formattedEdges: Edge[] = data.edges.map((edge, index) => ({
@@ -199,36 +203,30 @@ const Training = () => {
           source: edge.from.toString(),
           target: edge.to.toString(),
           markerEnd: { type: MarkerType.ArrowClosed },
-          style: {
-            stroke: '#e5e7eb',   
-            strokeWidth: 2,
-            opacity: 0.85,
-          },
+          style: { stroke: '#e5e7eb', strokeWidth: 2, opacity: 0.85 },
         }));
 
         const bottomPadding = 75;
-        const maxY = Math.max(
-          ...formattedNodes.map((n) => n.position.y + (n.height ?? 0))
-        );
+        const maxY = Math.max(...formattedNodes.map((n) => n.position.y));
 
         const spacerNode: Node = {
-            id: '__bottom_spacer__',
-            data: { label: '' },
-            position: { x: 0, y: maxY + bottomPadding },
-            style: {
-                opacity: 0,
-                width: 1,
-                height: 1,
-                pointerEvents: 'none',
-            },
-            selectable: false,
-            draggable: false,
+          id: '__bottom_spacer__',
+          data: { label: '' },
+          position: { x: 0, y: maxY + bottomPadding },
+          style: { opacity: 0, width: 1, height: 1, pointerEvents: 'none' },
+          selectable: false,
+          draggable: false,
         };
 
         setNodes([...formattedNodes, spacerNode]);
         setEdges(formattedEdges);
-      })
-      .catch(err => console.error("can't load graph:", err));
+      } catch (err) {
+        console.error("can't load graph:", err)
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchGraph()
   }, []);
 
   const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
@@ -319,6 +317,14 @@ const Training = () => {
       setIsSubmitting(false);
     }
   };
+
+  if (loading) {
+    return (
+      <div className="h-full flex items-center justify-center text-slate-500 font-mono animate-pulse">
+        LOADING...
+      </div>
+    );
+  }
 
   return (
     <div className="w-full h-[calc(100vh-64px)] relative flex">

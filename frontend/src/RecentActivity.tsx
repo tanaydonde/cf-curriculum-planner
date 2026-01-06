@@ -18,14 +18,15 @@ const RecentActivity = () => {
     if (!handle) return;
 
     const fetchRecent = async () => {
+      setLoading(true)
       try {
-        const resSolved = await fetch(`http://localhost:8080/api/recent/solved/${handle}`);
-        const solvedData = resSolved.ok ? await resSolved.json() : [];
-        setSolves(solvedData || []);
+        const [resSolved, resUnsolved] = await Promise.all([
+          fetch(`http://localhost:8080/api/recent/solved/${handle}`),
+          fetch(`http://localhost:8080/api/recent/unsolved/${handle}`),
+        ]);
 
-        const resUnsolved = await fetch(`http://localhost:8080/api/recent/unsolved/${handle}`);
+        const solvedData = resSolved.ok ? await resSolved.json() : [];
         const unsolvedData = resUnsolved.ok ? await resUnsolved.json() : [];
-        setUnsolved(unsolvedData || []);
 
         setSolves(solvedData || []);
         setUnsolved(unsolvedData || []);
@@ -37,7 +38,7 @@ const RecentActivity = () => {
     };
 
     fetchRecent();
-  }, [handle]);
+  }, []);
 
   const timeAgo = (dateString: string) => {
     const date = new Date(dateString);
@@ -72,7 +73,13 @@ const RecentActivity = () => {
     return "text-red-400 border-red-500/30 bg-red-500/10";
   };
 
-  if (loading) return <div className="animate-pulse h-32 bg-slate-800/50 rounded-xl w-full"></div>;
+  if (loading) {
+    return (
+      <div className="h-full flex items-center justify-center text-slate-500 font-mono animate-pulse">
+        LOADING...
+      </div>
+    );
+  }
 
   if (solves.length === 0 && unsolved.length === 0) {
     return (

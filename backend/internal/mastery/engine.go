@@ -348,6 +348,9 @@ func syncUser(conn *pgxpool.Pool, handle string, tagMap map[string]string, ances
 	}
     defer tx.Rollback(context.Background())
 
+	problemUpserts := make([]ProblemUpsert, 0, len(problemHistory))
+	binAgg := make(map[BinKey]*BinAgg)
+
     for id, subs := range problemHistory {
         var firstOK *CFSubmission
         attempts := 0
@@ -361,36 +364,42 @@ func syncUser(conn *pgxpool.Pool, handle string, tagMap map[string]string, ances
                 break
             }
         }
-		//if the user solved it call updateSubmission to update the problems solved
+
 		if firstOK != nil {
+			solvedAt := time.Unix(firstOK.CreationTimeSeconds, 0).UTC()
+
+			problemUpserts = append(problemUpserts, ProblemUpsert{
+				ProblemID: id, Status: "solved", T: solvedAt,
+			})
+
             sub := Submission{
                 ID: id,
                 Rating: firstOK.Problem.Rating,
                 Attempts: attempts,
                 TopicSlugs: getTopicSlugs(firstOK.Problem.Tags, tagMap),
-                SolvedAt: time.Unix(firstOK.CreationTimeSeconds, 0),
+                SolvedAt: solvedAt,
             }
             
-            err := updateSubmission(tx, handle, sub, tagMap, ancestry)
-			if err != nil {
-				return err
-			}
-        } else { //if the user didn't solve it, add into unsolved problems
-			firstOK = &subs[0]
-			_, err = tx.Exec(context.Background(), `
-			INSERT INTO user_problems (handle, problem_id, status, last_attempted_at)
-			VALUES ($1, $2, 'unsolved', $3)
-			ON CONFLICT (handle, problem_id) DO UPDATE SET
-        		status = CASE 
-            		WHEN user_problems.status = 'solved' THEN 'solved'
-            		ELSE EXCLUDED.status
-        		END,
-        	last_attempted_at = GREATEST(user_problems.last_attempted_at, EXCLUDED.last_attempted_at)`,
-			handle, id, time.Unix(firstOK.CreationTimeSeconds, 0))
-			if err != nil {
-				return err
-			}
+            accumulateSubmission(binAgg, sub, tagMap, ancestry)
+        } else {
+			last := subs[0]
+			lastAt := time.Unix(last.CreationTimeSeconds, 0).UTC()
+			problemUpserts = append(problemUpserts, ProblemUpsert{
+				ProblemID: id, Status: "unsolved", T: lastAt,
+			})
 		}
+	}
+
+	//updating user_problems
+	err = bulkUpsertUserProblems(tx, handle, problemUpserts)
+	if err != nil {
+		return err
+	}
+	
+	//updating user_interval_stats
+	err = bulkUpsertUserIntervalStats(tx, handle, binAgg)
+	if err != nil {
+		return err
 	}
 
 	topics, err := loadAllTopicBins(tx, handle, tagMap)
@@ -401,6 +410,135 @@ func syncUser(conn *pgxpool.Pool, handle string, tagMap map[string]string, ances
 		return err
 	}
     return tx.Commit(context.Background())
+}
+
+func accumulateSubmission(binAgg map[BinKey]*BinAgg, sub Submission, tagMap map[string]string, ancestry models.AncestryMap) {
+	base := getBaseRating(sub.Rating, sub.Attempts)
+	binIdx := getAbsoluteBinIdx(sub.SolvedAt)
+	for topic := range getTopics(tagMap) {
+		m := getMultiplier(topic, sub, ancestry)
+		if m <= 0 {
+			continue
+		}
+		credit := base * m
+
+		key := BinKey{Topic: topic, BinIdx: binIdx}
+		a := binAgg[key]
+		if a == nil {
+			a = &BinAgg{}
+			binAgg[key] = a
+		}
+		a.Credits = append(a.Credits, credit)
+		a.Multipliers = append(a.Multipliers, m)
+	}
+}
+
+func bulkUpsertUserProblems(tx pgx.Tx, handle string, problemUpserts []ProblemUpsert) error {
+	if len(problemUpserts) == 0 {
+		return nil
+	}
+	var b pgx.Batch
+	for _, pu := range problemUpserts {
+		b.Queue(`
+			INSERT INTO user_problems (handle, problem_id, status, last_attempted_at)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (handle, problem_id) DO UPDATE SET
+				status = CASE
+					WHEN user_problems.status = 'solved' THEN 'solved'
+					ELSE EXCLUDED.status
+				END,
+				last_attempted_at = GREATEST(user_problems.last_attempted_at, EXCLUDED.last_attempted_at)
+		`, handle, pu.ProblemID, pu.Status, pu.T)
+	}
+
+	br := tx.SendBatch(context.Background(), &b)
+	defer br.Close()
+	for range problemUpserts {
+		if _, err := br.Exec(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func bulkUpsertUserIntervalStats(tx pgx.Tx, handle string, binAgg map[BinKey]*BinAgg) error {
+	if len(binAgg) == 0 {
+		return nil
+	}
+	topics := make([]string, 0, len(binAgg))
+	bins := make([]int32, 0, len(binAgg))
+	for k := range binAgg {
+		topics = append(topics, k.Topic)
+		bins = append(bins, int32(k.BinIdx))
+	}
+
+	rows, err := tx.Query(context.Background(), `
+		SELECT s.topic_slug, s.bin_idx, s.credits, s.multipliers
+		FROM user_interval_stats s
+		JOIN UNNEST($2::text[], $3::int[]) AS u(topic_slug, bin_idx)
+		ON s.topic_slug = u.topic_slug AND s.bin_idx = u.bin_idx
+		WHERE s.handle = $1
+	`, handle, topics, bins)
+
+	if err != nil {
+		return err
+	}
+
+	defer rows.Close()
+
+	for rows.Next() {
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		var topic string
+		var binIdx int
+		var credits, multipliers []float64
+		if err := rows.Scan(&topic, &binIdx, &credits, &multipliers); err != nil {
+			return err
+		}
+
+		key := BinKey{Topic: topic, BinIdx: binIdx}
+		a := binAgg[key]
+		if a == nil {
+			continue
+		}
+
+		a.Credits = append(credits, a.Credits...)
+		a.Multipliers = append(multipliers, a.Multipliers...)
+	}
+
+	var b2 pgx.Batch
+	for key, a := range binAgg {
+		attributes := make([]SolveAttributes, 0, len(a.Credits))
+		for i := range a.Credits {
+			attributes = append(attributes, SolveAttributes{
+				BaseRating:  a.Credits[i] / a.Multipliers[i],
+				Multiplier:  a.Multipliers[i],
+			})
+		}
+		newBinScore := calculateIntervalBin(attributes)
+
+		b2.Queue(`
+			INSERT INTO user_interval_stats (handle, topic_slug, bin_idx, bin_score, credits, multipliers, last_updated)
+			VALUES ($1, $2, $3, $4, $5, $6, NOW())
+			ON CONFLICT (handle, topic_slug, bin_idx) DO UPDATE SET
+				bin_score = EXCLUDED.bin_score,
+				credits = EXCLUDED.credits,
+				multipliers = EXCLUDED.multipliers,
+				last_updated = NOW()
+		`, handle, key.Topic, key.BinIdx, newBinScore, a.Credits, a.Multipliers)
+	}
+
+	br2 := tx.SendBatch(context.Background(), &b2)
+	defer br2.Close()
+	for range binAgg {
+		if _, err := br2.Exec(); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func updateSubmissionFull(conn *pgxpool.Pool, handle string, problem ProblemSolveInput, tagMap map[string]string, ancestry models.AncestryMap) error {

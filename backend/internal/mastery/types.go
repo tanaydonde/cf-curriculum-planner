@@ -54,3 +54,19 @@ type CFSolveOutput struct {
 	Tags []string `json:"tags"`
 	SolvedAt time.Time `json:"solvedAt"`
 }
+
+type ProblemUpsert struct {
+	ProblemID string
+	Status string
+	T time.Time
+}
+
+type BinKey struct {
+	Topic string
+	BinIdx int
+}
+
+type BinAgg struct {
+	Credits []float64
+	Multipliers []float64
+}
