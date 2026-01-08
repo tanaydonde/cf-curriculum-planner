@@ -16,7 +16,7 @@ A personalized Codeforces analytics and recommendation engine that tracks topic 
 
 ## Tech Stack
 - **Backend:** Go
-- **Frontend** React + TypeScript + Vite
+- **Frontend:** React + TypeScript + Vite
 - **Database:** PostgreSQL
 - **Data:** Codeforces API
 
