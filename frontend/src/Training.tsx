@@ -229,7 +229,7 @@ const Training = () => {
     fetchGraph()
   }, []);
 
-  const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
+  const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
     if (node.id === '__bottom_spacer__') return;
     
     setSelectedTopic({
