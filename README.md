@@ -5,7 +5,8 @@ A personalized Codeforces analytics and recommendation engine that tracks topic 
 ## Status
 **In progress**  
 - Database deployed on **Neon**
-- Backend and frontend deployment coming soon
+- Backend deployed on **Render**
+- Frontend deployed on **GitHub Pages**
 
 ## Features
 - Topic-level mastery and peak tracking
@@ -20,4 +21,4 @@ A personalized Codeforces analytics and recommendation engine that tracks topic 
 - **Database:** PostgreSQL
 - **Data:** Codeforces API
 
-> Note: The full application is not yet deployed. This repository currently contains the completed core engine and database-backed logic.
+> Note: Note: Backend is hosted on Render (free tier), so the first connection may take ~30–60 seconds.
